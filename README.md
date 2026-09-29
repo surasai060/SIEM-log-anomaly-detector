@@ -166,7 +166,7 @@ Then open **http://localhost:8501** in your browser.
 ---
 
 ## 📊 Sample Output (CLI)
-![Dashboard screenshot](images/dashboard_result.png)
+![Dashboard screenshot](images/dashboard_results.png)
 ```
 [*] Loading logs from: sample_logs/auth.log
 [*] Parsed 971 log events
