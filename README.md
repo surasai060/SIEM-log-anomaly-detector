@@ -12,32 +12,13 @@ Built as a SOC analyst portfolio project by **Sai Sura** — Master's student in
 
 ## 📸 Dashboard Preview
 
-![Dashboard screenshot](images/dashboard.png)
+**Upload screen and summary — 971 events, 4 alerts, HIGH risk**
 
-Text preview of the dashboard output:
+![Upload and summary](images/dashboard_upload.png)
 
-```
-╔══════════════════════════════════════════════════════════╗
-║  🛡️  SIEM Log Anomaly Detector                          ║
-║  ─────────────────────────────────────────────────────  ║
-║  Total Events: 971   Alerts: 4   Severity: 🔴 HIGH      ║
-║  ─────────────────────────────────────────────────────  ║
-║                                                          ║
-║  🔴 [HIGH]   Brute Force Attack                         ║
-║              185.220.101.47 → 40 failed logins / 60s    ║
-║                                                          ║
-║  🟠 [MEDIUM] Port Scan Detected                         ║
-║              45.33.32.156 → 30 ports / 30s              ║
-║                                                          ║
-║  🟠 [MEDIUM] High Traffic Volume                        ║
-║              203.0.113.99 → 600 events                  ║
-║                                                          ║
-║  🟡 [LOW]    After-Hours Login Attempt                  ║
-║              91.108.4.1 → login at 02:17                ║
-║                                                          ║
-║  [ 📥 Download Incident Report (JSON) ]                 ║
-╚══════════════════════════════════════════════════════════╝
-```
+**Detected anomalies and recommended actions**
+
+![Detected anomalies](images/dashboard_results.png)
 
 ---
 
@@ -54,6 +35,7 @@ This tool **automates the first-pass detection** — similar to what SIEM correl
 - **Log parsing** of syslog-style authentication and connection logs with regular expressions
 - **4 detection rules** based on thresholds and time windows (brute force, port scan, high traffic, after-hours login)
 - **Severity classification** (HIGH / MEDIUM / LOW) and an overall risk level per report
+- **MITRE ATT&CK mapping** — every alert includes its technique ID (T1110, T1046, T1498, T1078)
 - **Recommended response actions** for every alert, written like a SOC playbook step
 - **JSON incident reports** that are easy to store, share or send to other tools
 - **Streamlit dashboard** to upload logs, view alerts and download the report
@@ -66,15 +48,15 @@ This tool **automates the first-pass detection** — similar to what SIEM correl
 | Threat | Detection Rule | Severity | Recommended Action |
 |--------|----------------|----------|--------------------|
 | **Brute Force Attack** | >10 failed logins from the same IP within 60 seconds | 🔴 HIGH | Block IP, review account lockout policy, enable MFA |
-| **Port Scan** | >15 unique ports hit from the same IP within 30 seconds | 🟠 MEDIUM | Block IP at perimeter firewall, review IDS/IPS rules |
-| **High Traffic / DDoS** | >500 events from a single IP in the analysed log | 🟠 MEDIUM | Investigate for DDoS or data exfiltration |
+| **Port Scan** | >15 unique **destination** ports hit from the same IP within 30 seconds | 🟠 MEDIUM | Block IP at perimeter firewall, review IDS/IPS rules |
+| **High Traffic / DDoS** | >500 events from a single IP within 10 minutes | 🟠 MEDIUM | Investigate for DDoS or data exfiltration; consider rate limiting |
 | **After-Hours Login** | Authentication attempt outside 08:00–18:00 | 🟡 LOW | Verify if legitimate; alert account owner |
 
 ---
 
 ## 🎯 MITRE ATT&CK Mapping
 
-Each detection rule relates to a MITRE ATT&CK technique. This helps analysts describe alerts in the common language used by SOC teams.
+Each alert in the JSON report and CLI output includes a `mitre_technique` field. This helps analysts describe alerts in the common language used by SOC teams.
 
 | Detection | MITRE ATT&CK Technique | Tactic |
 |-----------|------------------------|--------|
@@ -166,7 +148,7 @@ Then open **http://localhost:8501** in your browser.
 ---
 
 ## 📊 Sample Output (CLI)
-![Dashboard screenshot](images/dashboard_results.png)
+
 ```
 [*] Loading logs from: sample_logs/auth.log
 [*] Parsed 971 log events
@@ -181,21 +163,25 @@ Then open **http://localhost:8501** in your browser.
   [HIGH] Brute Force Attack
   Source IP : 185.220.101.47
   Details   : 40 failed login attempts from 185.220.101.47 within 60s
+  MITRE     : T1110 - Brute Force
   Action    : Block IP, review account lockout policy, enable MFA
 
   [MEDIUM] Port Scan
   Source IP : 45.33.32.156
   Details   : 45.33.32.156 scanned 30 unique ports within 30s
+  MITRE     : T1046 - Network Service Discovery
   Action    : Block IP at perimeter firewall, review IDS/IPS rules
 
   [MEDIUM] High Traffic Volume
   Source IP : 203.0.113.99
-  Details   : 203.0.113.99 generated 600 log events (threshold: 500)
-  Action    : Investigate for DDoS or data exfiltration
+  Details   : 203.0.113.99 generated 600 log events within 10 minutes (threshold: 500)
+  MITRE     : T1498 - Network Denial of Service
+  Action    : Investigate for DDoS or data exfiltration; consider rate limiting
 
   [LOW] After-Hours Login Attempt
   Source IP : 91.108.4.1
-  Details   : Authentication attempt at 02:17 (outside business hours)
+  Details   : Authentication attempt from 91.108.4.1 at 02:17 (outside business hours)
+  MITRE     : T1078 - Valid Accounts (possible misuse)
   Action    : Verify if legitimate; alert account owner
 ```
 
@@ -221,7 +207,9 @@ Then open **http://localhost:8501** in your browser.
       "count": 40,
       "first_seen": "2026-06-27 09:30:00",
       "last_seen": "2026-06-27 09:30:45",
-      "recommendation": "Block IP, review account lockout policy, enable MFA"
+      "description": "40 failed login attempts from 185.220.101.47 within 60s",
+      "recommendation": "Block IP, review account lockout policy, enable MFA",
+      "mitre_technique": "T1110 - Brute Force"
     }
   ]
 }
@@ -241,6 +229,14 @@ Example for the brute-force alert above:
 
 ---
 
+## 🐞 Tuning Story: Fixing a False Positive
+
+During testing, the brute-force attacker was **also** reported as a port scan. The reason: SSH log lines contain the attacker's **source port** (`from 185.220.101.47 port 51544`), which changes on every connection, and the parser counted these as "scanned ports".
+
+**Fix:** the port-scan rule now uses only the **destination port** (`DPT=` in firewall logs). A real port scan means many different destination ports. This is the same kind of rule tuning SOC teams do to reduce false positives.
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -249,16 +245,18 @@ SIEM-log-anomaly-detector/
 ├── analyzer.py                 # Core detection engine
 │   ├── Log Parser              #   Parses raw syslog lines
 │   ├── Brute Force Detector    #   Threshold: >10 failures / 60s
-│   ├── Port Scan Detector      #   Threshold: >15 ports / 30s
-│   ├── High Traffic Detector   #   Threshold: >500 events / IP
+│   ├── Port Scan Detector      #   Threshold: >15 dest. ports / 30s
+│   ├── High Traffic Detector   #   Threshold: >500 events / IP / 10 min
 │   ├── After-Hours Detector    #   Outside 08:00–18:00
+│   ├── MITRE Mapping           #   Technique ID per alert
 │   └── Report Generator        #   JSON incident report
 │
 ├── dashboard.py                # Streamlit web dashboard
 ├── generate_sample_logs.py     # Test log generator with embedded attacks
 ├── requirements.txt            # Python dependencies
 ├── images/
-│   └── dashboard.png           # Dashboard screenshot
+│   ├── dashboard_upload.png    # Upload + summary screenshot
+│   └── dashboard_results.png   # Alerts screenshot
 └── sample_logs/
     └── auth.log                # Generated test data
 ```
@@ -284,7 +282,6 @@ This is a learning and portfolio project, not a production SIEM:
 
 - Works on **single log files**, not live log streams from many sources.
 - Uses **fixed thresholds**; real SIEMs tune rules per environment to reduce false positives.
-- The high-traffic rule counts events per IP across the **whole file**, without a time window.
 - Tested with **generated sample logs**; real log formats may need parser changes.
 - No **log normalisation** across different vendors (a real SIEM normalises fields, e.g., CEF or CIM).
 
@@ -292,8 +289,9 @@ This is a learning and portfolio project, not a production SIEM:
 
 ## 🗺️ Roadmap
 
-- [ ] Add a time window to the high-traffic rule (e.g., >500 events within 5 minutes)
-- [ ] Add a `mitre_technique` field to every alert in the JSON report
+- [x] Add a time window to the high-traffic rule (>500 events within 10 minutes)
+- [x] Add a `mitre_technique` field to every alert in the JSON report
+- [x] Fix port-scan false positive (use destination ports only)
 - [ ] Detect **successful login after failed attempts** (brute force success)
 - [ ] Move thresholds into a configuration file (`config.yaml`)
 - [ ] Support more log formats (Windows Event Logs, Apache/Nginx access logs)
