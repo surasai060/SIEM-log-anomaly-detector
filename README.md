@@ -1,12 +1,20 @@
 # 🛡️ SIEM Log Anomaly Detector
 
-> A Python tool that automatically detects security threats in firewall and syslog files — simulating the correlation rules used in enterprise SIEM platforms like **IBM QRadar** and **HP ArcSight**.
+> A Python tool that automatically detects security threats in syslog and firewall-style log files — simulating the correlation-rule approach used in enterprise SIEM platforms such as **IBM QRadar** and **HP ArcSight**.
 
 Built as a SOC analyst portfolio project by **Sai Sura** — Master's student in Intelligent Interactive Systems, Universität Bielefeld.
+
+![Python](https://img.shields.io/badge/Python-3.x-blue)
+![Streamlit](https://img.shields.io/badge/Dashboard-Streamlit-red)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
 ## 📸 Dashboard Preview
+
+![Dashboard screenshot](images/dashboard.png)
+
+Text preview of the dashboard output:
 
 ```
 ╔══════════════════════════════════════════════════════════╗
@@ -35,55 +43,93 @@ Built as a SOC analyst portfolio project by **Sai Sura** — Master's student in
 
 ## 🎯 Problem This Solves
 
-In a real Security Operations Center (SOC), analysts manually review **thousands of log lines per day** looking for attack patterns. This is slow, error-prone, and impossible to scale.
+In a real Security Operations Center (SOC), analysts review **thousands of log lines per day** to find attack patterns. Doing this manually is slow, error-prone and does not scale.
 
-This tool **automates the first-pass detection** — the same job that IBM QRadar and HP ArcSight do with their correlation rules — using pure Python. An analyst can drop in a log file and immediately see what needs attention, instead of reading raw text.
+This tool **automates the first-pass detection** — similar to what SIEM correlation rules do — using pure Python. An analyst can load a log file and immediately see which events need attention, with a severity level and a recommended action for each alert.
+
+---
+
+## ✨ Key Features
+
+- **Log parsing** of syslog-style authentication and connection logs with regular expressions
+- **4 detection rules** based on thresholds and time windows (brute force, port scan, high traffic, after-hours login)
+- **Severity classification** (HIGH / MEDIUM / LOW) and an overall risk level per report
+- **Recommended response actions** for every alert, written like a SOC playbook step
+- **JSON incident reports** that are easy to store, share or send to other tools
+- **Streamlit dashboard** to upload logs, view alerts and download the report
+- **Sample log generator** that mixes realistic attack patterns into normal traffic for testing
 
 ---
 
 ## 🔍 What It Detects
 
-| Threat | Detection Rule | Severity |
-|--------|---------------|----------|
-| **Brute Force Attack** | >10 failed logins from same IP within 60 seconds | 🔴 HIGH |
-| **Port Scan** | >15 unique ports hit from same IP within 30 seconds | 🟠 MEDIUM |
-| **High Traffic / DDoS** | >500 events from a single IP | 🟠 MEDIUM |
-| **After-Hours Login** | Authentication attempt outside 08:00–18:00 | 🟡 LOW |
+| Threat | Detection Rule | Severity | Recommended Action |
+|--------|----------------|----------|--------------------|
+| **Brute Force Attack** | >10 failed logins from the same IP within 60 seconds | 🔴 HIGH | Block IP, review account lockout policy, enable MFA |
+| **Port Scan** | >15 unique ports hit from the same IP within 30 seconds | 🟠 MEDIUM | Block IP at perimeter firewall, review IDS/IPS rules |
+| **High Traffic / DDoS** | >500 events from a single IP in the analysed log | 🟠 MEDIUM | Investigate for DDoS or data exfiltration |
+| **After-Hours Login** | Authentication attempt outside 08:00–18:00 | 🟡 LOW | Verify if legitimate; alert account owner |
+
+---
+
+## 🎯 MITRE ATT&CK Mapping
+
+Each detection rule relates to a MITRE ATT&CK technique. This helps analysts describe alerts in the common language used by SOC teams.
+
+| Detection | MITRE ATT&CK Technique | Tactic |
+|-----------|------------------------|--------|
+| Brute Force Attack | [T1110 – Brute Force](https://attack.mitre.org/techniques/T1110/) | Credential Access |
+| Port Scan | [T1046 – Network Service Discovery](https://attack.mitre.org/techniques/T1046/) | Discovery |
+| High Traffic / DDoS | [T1498 – Network Denial of Service](https://attack.mitre.org/techniques/T1498/) | Impact |
+| After-Hours Login | [T1078 – Valid Accounts](https://attack.mitre.org/techniques/T1078/) (possible misuse) | Initial Access / Persistence |
+
+> Note: after-hours logins are not always malicious. They are flagged as LOW severity so an analyst can verify them.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-                    ┌─────────────────┐
-                    │   Log File      │
-                    │  (syslog/fw)    │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │  Log Parser     │  ← Extracts: timestamp, IP,
-                    │  (analyzer.py)  │    port, service, auth status
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-    ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-    │  Brute Force │ │  Port Scan   │ │ High Traffic │
-    │  Detector    │ │  Detector    │ │  Detector    │
-    └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-              └──────────────┼──────────────┘
-                             ▼
-                    ┌─────────────────┐
-                    │ Report Generator│  ← JSON incident report
-                    │                 │    with severity + actions
-                    └────────┬────────┘
-                             │
-                    ┌────────┴────────┐
-                    │   Streamlit     │  ← Web dashboard
-                    │   Dashboard     │
-                    └─────────────────┘
+                         ┌─────────────────┐
+                         │    Log File     │
+                         │  (syslog / fw)  │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │   Log Parser    │  ← Extracts: timestamp, IP,
+                         │  (analyzer.py)  │    port, service, auth status
+                         └────────┬────────┘
+                                  │
+         ┌───────────────┬────────┴───────┬────────────────┐
+         ▼               ▼                ▼                ▼
+┌────────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│  Brute Force   │ │  Port Scan   │ │ High Traffic │ │  After-Hours │
+│   Detector     │ │   Detector   │ │   Detector   │ │   Detector   │
+└───────┬────────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+        └─────────────────┴────────┬───────┴────────────────┘
+                                   ▼
+                         ┌─────────────────┐
+                         │ Report Generator│  ← JSON incident report
+                         │                 │    with severity + actions
+                         └────────┬────────┘
+                                  │
+                   ┌──────────────┴──────────────┐
+                   ▼                             ▼
+          ┌─────────────────┐           ┌─────────────────┐
+          │   CLI Output    │           │    Streamlit    │
+          │ (terminal view) │           │    Dashboard    │
+          └─────────────────┘           └─────────────────┘
 ```
+
+### How it works (step by step)
+
+1. **Load** — the analyzer reads the log file line by line.
+2. **Parse** — regular expressions extract the timestamp, source IP, destination port, service and authentication result from each line.
+3. **Detect** — four detection functions check the parsed events against their thresholds and time windows (sliding window per source IP).
+4. **Classify** — each alert gets a severity level; the highest alert severity becomes the overall report severity.
+5. **Report** — alerts, counts, first/last seen times and recommended actions are written to a JSON incident report.
+6. **Visualise** — results are shown in the terminal (CLI) or in the Streamlit dashboard.
 
 ---
 
@@ -100,13 +146,13 @@ cd SIEM-log-anomaly-detector
 pip install -r requirements.txt
 ```
 
-### 3. Generate sample logs (with real attack patterns embedded)
+### 3. Generate sample logs (with attack patterns embedded)
 ```bash
 python generate_sample_logs.py
 ```
-This creates `sample_logs/auth.log` with ~970 log entries including a brute force attack, port scan, and flood traffic mixed into normal traffic.
+This creates `sample_logs/auth.log` with about 970 log entries, including a brute-force attack, a port scan and flood traffic mixed into normal traffic.
 
-### 4a. Run CLI analysis
+### 4a. Run the CLI analysis
 ```bash
 python analyzer.py sample_logs/auth.log report.json
 ```
@@ -183,6 +229,18 @@ Then open **http://localhost:8501** in your browser.
 
 ---
 
+## 🕵️ How a SOC Analyst Would Use the Results
+
+Example for the brute-force alert above:
+
+1. **Validate** — confirm the 40 failed logins in the raw log lines for `185.220.101.47`.
+2. **Check success** — did any login from this IP **succeed** after the failures? A success means possible account compromise and must be escalated.
+3. **Enrich** — check the IP reputation (e.g., VirusTotal, AbuseIPDB) and its country/hosting provider.
+4. **Scope** — are other servers or accounts targeted by the same IP?
+5. **Respond** — block the IP, check the targeted account, enforce MFA, and document the case.
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -190,15 +248,17 @@ SIEM-log-anomaly-detector/
 │
 ├── analyzer.py                 # Core detection engine
 │   ├── Log Parser              #   Parses raw syslog lines
-│   ├── Brute Force Detector    #   Threshold: >10 failures/60s
-│   ├── Port Scan Detector      #   Threshold: >15 ports/30s
-│   ├── High Traffic Detector   #   Threshold: >500 events/IP
-│   ├── After-Hours Detector    #   Outside 08:00-18:00
+│   ├── Brute Force Detector    #   Threshold: >10 failures / 60s
+│   ├── Port Scan Detector      #   Threshold: >15 ports / 30s
+│   ├── High Traffic Detector   #   Threshold: >500 events / IP
+│   ├── After-Hours Detector    #   Outside 08:00–18:00
 │   └── Report Generator        #   JSON incident report
 │
 ├── dashboard.py                # Streamlit web dashboard
-├── generate_sample_logs.py     # Realistic test log generator
-├── requirements.txt            # streamlit
+├── generate_sample_logs.py     # Test log generator with embedded attacks
+├── requirements.txt            # Python dependencies
+├── images/
+│   └── dashboard.png           # Dashboard screenshot
 └── sample_logs/
     └── auth.log                # Generated test data
 ```
@@ -207,32 +267,57 @@ SIEM-log-anomaly-detector/
 
 ## 🔗 How This Relates to Real SIEM Tools
 
-| This Project | IBM QRadar / HP ArcSight |
+| This Project | Similar QRadar / ArcSight Concept |
 |---|---|
-| `detect_brute_force()` | "Authentication Failure" correlation rule |
-| `detect_port_scan()` | "Port Scan Detected" offense rule |
-| `detect_high_traffic()` | "Flow Volume Anomaly" rule |
+| `detect_brute_force()` | Authentication-failure correlation rule |
+| `detect_port_scan()` | Port-scan / reconnaissance correlation rule |
+| `detect_high_traffic()` | Traffic or flow volume anomaly rule |
+| Thresholds + time windows | Rule conditions (e.g., "X events within Y seconds") |
 | JSON incident report | QRadar Offense / ArcSight Case |
-| Severity: HIGH/MEDIUM/LOW | QRadar Magnitude 1–10 |
+| Severity: HIGH / MEDIUM / LOW | QRadar Magnitude / ArcSight Priority |
+
+---
+
+## ⚠️ Limitations
+
+This is a learning and portfolio project, not a production SIEM:
+
+- Works on **single log files**, not live log streams from many sources.
+- Uses **fixed thresholds**; real SIEMs tune rules per environment to reduce false positives.
+- The high-traffic rule counts events per IP across the **whole file**, without a time window.
+- Tested with **generated sample logs**; real log formats may need parser changes.
+- No **log normalisation** across different vendors (a real SIEM normalises fields, e.g., CEF or CIM).
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Add a time window to the high-traffic rule (e.g., >500 events within 5 minutes)
+- [ ] Add a `mitre_technique` field to every alert in the JSON report
+- [ ] Detect **successful login after failed attempts** (brute force success)
+- [ ] Move thresholds into a configuration file (`config.yaml`)
+- [ ] Support more log formats (Windows Event Logs, Apache/Nginx access logs)
+- [ ] Add IP reputation enrichment with the AbuseIPDB or VirusTotal API
+- [ ] Add unit tests for each detection rule
 
 ---
 
 ## 🛠️ Tech Stack
 
 - **Python 3.x** — log parsing, detection logic, report generation
-- **Streamlit** — interactive web dashboard
-- **JSON** — structured incident report output
 - **Regex** — log line pattern matching
+- **JSON** — structured incident report output
+- **Streamlit** — interactive web dashboard
 
 ---
 
 ## 👤 Author
 
 **Sai Sura**  
-Master's in Intelligent Interactive Systems — Universität Bielefeld  
-1 year SOC experience — Tech Mahindra (IBM QRadar, HP ArcSight)  
+Master's student in Intelligent Interactive Systems — Universität Bielefeld  
+Background in SOC operations: alert triage, log analysis and incident response  
 📧 surasai060@gmail.com  
-🔗 [LinkedIn](https://linkedin.com/in/sai-sura-945032284)
+🔗 [LinkedIn](https://linkedin.com/in/sai-sura-945032284) · [GitHub](https://github.com/surasai060)
 
 ---
 
