@@ -12,7 +12,7 @@ Built as a SOC analyst portfolio project by **Sai Sura** — Master's student in
 
 ## 📸 Dashboard Preview
 
-![Dashboard screenshot](dashboard.jpeg)
+![Dashboard screenshot](images/dashboard.png)
 
 Text preview of the dashboard output:
 
@@ -166,7 +166,7 @@ Then open **http://localhost:8501** in your browser.
 ---
 
 ## 📊 Sample Output (CLI)
-
+![Dashboard screenshot](images/dashboard_result.png)
 ```
 [*] Loading logs from: sample_logs/auth.log
 [*] Parsed 971 log events
