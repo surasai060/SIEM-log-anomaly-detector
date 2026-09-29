@@ -12,7 +12,7 @@ Built as a SOC analyst portfolio project by **Sai Sura** — Master's student in
 
 ## 📸 Dashboard Preview
 
-![Dashboard screenshot](images/dashboard.png)
+![Dashboard screenshot](dashboard.jpeg)
 
 Text preview of the dashboard output:
 
