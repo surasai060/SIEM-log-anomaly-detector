@@ -19,6 +19,11 @@ def make_auth_ok(dt, ip, user):
 def make_port_hit(dt, src_ip, dst_port):
     host = random.choice(HOSTS)
     return f"{fmt_ts(dt)} {host} kernel: [UFW BLOCK] IN=eth0 SRC={src_ip} DST=192.168.1.1 DPT={dst_port} PROTO=TCP"
+def make_web_request(dt, ip):
+    """Web access line that always contains the client IP (used for the flood)."""
+    host = random.choice(['webserver01', 'gateway'])
+    path = random.choice(['/index.html', '/login', '/api/data', '/search?q=test', '/images/logo.png'])
+    return f"{fmt_ts(dt)} {host} nginx[{random.randint(1000,9999)}]: {ip} - GET {path} HTTP/1.1 200"
 def make_normal_traffic(dt, ip):
     host = random.choice(HOSTS)
     service = random.choice(SERVICES)
@@ -59,7 +64,7 @@ def generate(output_path='sample_logs/auth.log', num_normal=300):
     flood_start = base_time + timedelta(minutes=90)
     for i in range(600):
         dt = flood_start + timedelta(seconds=random.randint(0, 600))
-        lines.append((dt, make_normal_traffic(dt, HIGH_TRAFFIC_IP)))
+        lines.append((dt, make_web_request(dt, HIGH_TRAFFIC_IP)))
     night_dt = base_time.replace(hour=2, minute=17, second=33)
     lines.append((night_dt, make_auth_fail(night_dt, "91.108.4.1", "root")))
     lines.sort(key=lambda x: x[0])
