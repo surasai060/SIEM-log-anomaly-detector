@@ -6,7 +6,15 @@ BRUTE_FORCE_THRESHOLD = 10
 BRUTE_FORCE_WINDOW_SEC = 60      
 PORT_SCAN_THRESHOLD = 15         
 PORT_SCAN_WINDOW_SEC = 30        
-HIGH_TRAFFIC_THRESHOLD = 500     
+HIGH_TRAFFIC_THRESHOLD = 500
+HIGH_TRAFFIC_WINDOW_SEC = 600    # 10 minutes
+
+MITRE = {
+    'Brute Force Attack': 'T1110 - Brute Force',
+    'Port Scan': 'T1046 - Network Service Discovery',
+    'High Traffic Volume': 'T1498 - Network Denial of Service',
+    'After-Hours Login Attempt': 'T1078 - Valid Accounts (possible misuse)',
+}
 
 LOG_PATTERN = re.compile(
     r'(?P<timestamp>\w{3}\s+\d+\s+\d+:\d+:\d+)\s+'
@@ -18,7 +26,10 @@ AUTH_FAIL_PATTERN = re.compile(
     r'(Failed password|authentication failure|Invalid user|FAILED LOGIN)',
     re.IGNORECASE
 )
-PORT_PATTERN = re.compile(r'DPT=(\d+)|port[=\s]+(\d+)|:(\d+)\s*$', re.IGNORECASE)
+# Only the DESTINATION port (DPT=) is used for port-scan detection.
+# SSH lines like "from 1.2.3.4 port 51544" contain the attacker's SOURCE port,
+# which changes on every connection and must NOT count as a scanned port.
+DST_PORT_PATTERN = re.compile(r'\bDPT=(\d+)', re.IGNORECASE)
 IP_PATTERN = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
 
 def parse_timestamp(ts_str, year=None):
@@ -47,12 +58,13 @@ def parse_log_line(line):
             'message': line,
             'src_ip': ips[0] if ips else None,
             'dst_ip': ips[1] if len(ips) > 1 else None,
-            'port': None,
+            'dst_port': None,
+            'is_auth_failure': bool(AUTH_FAIL_PATTERN.search(line)),
         }
     data = match.groupdict()
     ips = IP_PATTERN.findall(data['message'])
-    port_match = PORT_PATTERN.search(data['message'])
-    port = next((g for g in port_match.groups() if g), None) if port_match else None
+    port_match = DST_PORT_PATTERN.search(data['message'])
+    dst_port = int(port_match.group(1)) if port_match else None
     return {
         'raw': line,
         'timestamp': parse_timestamp(data['timestamp']),
@@ -61,7 +73,7 @@ def parse_log_line(line):
         'message': data['message'],
         'src_ip': ips[0] if ips else None,
         'dst_ip': ips[1] if len(ips) > 1 else None,
-        'port': int(port) if port else None,
+        'dst_port': dst_port,
         'is_auth_failure': bool(AUTH_FAIL_PATTERN.search(data['message'])),
     }
 def load_logs(filepath):
@@ -108,17 +120,17 @@ def detect_brute_force(events):
     return alerts
 
 def detect_port_scan(events):
-    """Detect port scans: single IP hitting >15 unique ports within 30 seconds."""
+    """Detect port scans: single IP hitting >=15 unique DESTINATION ports within 30 seconds."""
     alerts = []
     port_hits = defaultdict(list)  # ip -> [(timestamp, port)]
 
     for event in events:
-        if not event.get('src_ip') or not event.get('port'):
+        if not event.get('src_ip') or not event.get('dst_port'):
             continue
         ts = event['timestamp']
         if ts is None:
             continue
-        port_hits[event['src_ip']].append((ts, event['port']))
+        port_hits[event['src_ip']].append((ts, event['dst_port']))
 
     for ip, hits in port_hits.items():
         hits.sort()
@@ -139,22 +151,38 @@ def detect_port_scan(events):
                 break
     return alerts
 def detect_high_traffic(events):
-    """Detect unusually high request volume from a single IP."""
+    """Detect high volume: >=500 events from a single IP within 10 minutes."""
     alerts = []
-    ip_count = defaultdict(int)
+    times_by_ip = defaultdict(list)
     for event in events:
-        if event.get('src_ip'):
-            ip_count[event['src_ip']] += 1
-    for ip, count in ip_count.items():
-        if count >= HIGH_TRAFFIC_THRESHOLD:
-            alerts.append({
-                'type': 'High Traffic Volume',
-                'severity': 'MEDIUM',
-                'src_ip': ip,
-                'event_count': count,
-                'description': f"{ip} generated {count} log events (threshold: {HIGH_TRAFFIC_THRESHOLD})",
-                'recommendation': 'Investigate for DDoS or data exfiltration; consider rate limiting',
-            })
+        if event.get('src_ip') and event.get('timestamp'):
+            times_by_ip[event['src_ip']].append(event['timestamp'])
+
+    window = timedelta(seconds=HIGH_TRAFFIC_WINDOW_SEC)
+    for ip, timestamps in times_by_ip.items():
+        timestamps.sort()
+        left = 0
+        for right in range(len(timestamps)):          # sliding window
+            while timestamps[right] - timestamps[left] > window:
+                left += 1
+            count = right - left + 1
+            if count >= HIGH_TRAFFIC_THRESHOLD:
+                # extend to the full burst inside this window for reporting
+                last = right
+                while last + 1 < len(timestamps) and timestamps[last + 1] - timestamps[left] <= window:
+                    last += 1
+                count = last - left + 1
+                alerts.append({
+                    'type': 'High Traffic Volume',
+                    'severity': 'MEDIUM',
+                    'src_ip': ip,
+                    'event_count': count,
+                    'first_seen': timestamps[left].strftime('%Y-%m-%d %H:%M:%S'),
+                    'last_seen': timestamps[last].strftime('%Y-%m-%d %H:%M:%S'),
+                    'description': f"{ip} generated {count} log events within {HIGH_TRAFFIC_WINDOW_SEC // 60} minutes (threshold: {HIGH_TRAFFIC_THRESHOLD})",
+                    'recommendation': 'Investigate for DDoS or data exfiltration; consider rate limiting',
+                })
+                break
     return alerts
 
 def detect_after_hours(events, business_start=8, business_end=18):
@@ -207,7 +235,7 @@ def generate_report(alerts, log_file, total_events):
             f"Overall risk level: {severity}."
         ) if alerts else f"No anomalies detected across {total_events} log events.",
         'alerts': alerts,
-        'recommendations': list({a['recommendation'] for a in alerts}) if alerts else ['No action required.'],
+        'recommendations': list(dict.fromkeys(a['recommendation'] for a in alerts)) if alerts else ['No action required.'],  # unique, keeps HIGH-first order
     }
     return report
 def analyze(log_filepath, output_json=None):
@@ -222,6 +250,9 @@ def analyze(log_filepath, output_json=None):
     alerts += detect_port_scan(events)
     alerts += detect_high_traffic(events)
     alerts += detect_after_hours(events)
+
+    for alert in alerts:                      # MITRE ATT&CK mapping
+        alert['mitre_technique'] = MITRE.get(alert['type'], 'N/A')
 
     report = generate_report(alerts, log_filepath, len(events))
 
@@ -244,3 +275,5 @@ if __name__ == '__main__':
         print(f"\n  [{alert['severity']}] {alert['type']}")
         print(f"  Source IP : {alert['src_ip']}")
         print(f"  Details   : {alert['description']}")
+        print(f"  MITRE     : {alert['mitre_technique']}")
+        print(f"  Action    : {alert['recommendation']}")
